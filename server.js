@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import Message from "./models/Message.js";
+import pusher from "./config/pusher.js";
 
 // ENV variables
 dotenv.config();
@@ -20,11 +21,32 @@ mongoose.connect(process.env.MONGO_URL, {
   useUnifiedTopology: true,
 });
 
+const db = mongoose.connection;
+// Watch for changes in the collection
+db.once("open", () => {
+  console.log("DB Connected");
+  const msgCollection = db.collection("messages");
+  const changeStream = msgCollection.watch();
+
+  changeStream.on("change", (change) => {
+    if (change.operationType === "insert") {
+      const messageDetails = change.fullDocument;
+      pusher.trigger("messages", "inserted", {
+        name: messageDetails.user,
+        message: messageDetails.message,
+      });
+    } else {
+      console.log("Error triggering pusher");
+    }
+  });
+});
+
 // Api routes
 app.get("/", (req, res) => {
   res.status(200).send("Hello!");
 });
 
+// Post message
 app.post("/messages/new", (req, res) => {
   const dbMessage = req.body;
 
@@ -33,6 +55,17 @@ app.post("/messages/new", (req, res) => {
       res.status(500).send(err);
     } else {
       res.status(201).send(`New message created: \n ${data}`);
+    }
+  });
+});
+
+// Get all messages
+app.get("/messages/sync", (req, res) => {
+  Message.find((err, data) => {
+    if (err) {
+      res.status(500).send(err);
+    } else {
+      res.status(200).send(data);
     }
   });
 });
